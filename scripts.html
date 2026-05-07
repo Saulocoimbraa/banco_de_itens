@@ -1,0 +1,1013 @@
+<script>
+  // VERSÃO: 1.0.2 - CORREÇÃO DEFINITIVA ATUALIZARFILTROS
+  let todasQuestoes = [];
+
+  let user = { isAdmin: false };
+
+  document.addEventListener("DOMContentLoaded", () => {
+    showLoader(true);
+
+    // Verificar autenticação primeiro
+    carregarPagina();
+
+    // Menu Toggle (Mobile)
+    const toggleBtn = document.getElementById('menu-toggle');
+    const sidebar = document.getElementById('sidebar');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        sidebar.classList.toggle('open');
+      });
+    }
+
+    // Botão Voltar ao Topo
+    const btnTopo = document.getElementById('btn-topo');
+    if (btnTopo) {
+      window.addEventListener('scroll', () => {
+        if (window.scrollY > 300) {
+          btnTopo.classList.add('visible');
+        } else {
+          btnTopo.classList.remove('visible');
+        }
+      });
+      btnTopo.addEventListener('click', () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
+  });
+
+  // Mapeamento de títulos por view
+  const viewTitles = {
+    'view-filtros': 'Início',
+    'view-simulado': 'Gerador de Simulado',
+    'view-diagnostico': 'Teste Diagnóstico',
+    'view-temas': 'Navegar por Temas',
+    'view-stats': 'Estatísticas',
+    'view-config': 'Configurações'
+  };
+
+  function switchView(viewId, element, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    document.querySelectorAll('.view-section').forEach(section => {
+      section.style.display = 'none';
+    });
+    const targetView = document.getElementById(viewId);
+    if (!targetView) return;
+    targetView.style.display = 'block';
+
+    // Atualizar título do header
+    const headerTitle = document.getElementById('header-title');
+    if (headerTitle) headerTitle.textContent = viewTitles[viewId] || '';
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.classList.remove('active');
+    });
+    if (element) {
+      element.classList.add('active');
+    }
+
+    if (viewId === 'view-filtros') {
+      filtrarQuestoes();
+    } else if (viewId === 'view-temas') {
+      renderizarArvores();
+    } else if (viewId === 'view-diagnostico') {
+      atualizarDescritoresDiagnostico();
+    } else if (viewId === 'view-stats') {
+      carregarEstatisticas();
+    } else if (viewId === 'view-config') {
+      carregarConfig();
+    }
+
+    if (window.innerWidth <= 768) {
+      document.getElementById('sidebar').classList.remove('open');
+    }
+
+    // Scroll ao topo ao trocar de aba
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    mostrarExportBar(false);
+  }
+
+  function showLoader(show) {
+    document.getElementById('loader').style.display = show ? 'block' : 'none';
+    document.getElementById('overlay').style.display = show ? 'block' : 'none';
+  }
+
+  function preencherFiltros(filtros) {
+    const { disciplinas, descritores, niveis } = filtros;
+    preencherSelect("filtroDisciplina", disciplinas);
+    preencherSelect("filtroDescritor", descritores);
+    preencherSelect("filtroNivel", niveis);
+    preencherSelect("simDisciplina", disciplinas);
+    preencherSelect("diagDisciplina", disciplinas);
+  }
+
+  function preencherSelect(id, opcoes) {
+    const select = document.getElementById(id);
+    if (!select) return;
+    // Clear except first
+    while (select.options.length > 1) { select.remove(1); }
+    opcoes.forEach(opcao => {
+      const option = document.createElement("option");
+      option.value = opcao;
+      option.textContent = opcao;
+      select.appendChild(option);
+    });
+  }
+
+  function filtrarQuestoes() {
+    showLoader(true);
+    const filtroDisciplina = document.getElementById("filtroDisciplina").value;
+    const filtroDescritor = document.getElementById("filtroDescritor").value;
+    const filtroNivel = document.getElementById("filtroNivel").value;
+    const buscaTexto = (document.getElementById("buscaTexto")?.value || "").toLowerCase().trim();
+
+    const questoesFiltradas = todasQuestoes.filter(q => {
+      const disciplinaMatch = !filtroDisciplina || (q.disciplina || "").toString().trim().toUpperCase() === filtroDisciplina.toString().trim().toUpperCase();
+      const descritorMatch = !filtroDescritor || normalizarDescritor(q.descritor) === normalizarDescritor(filtroDescritor);
+      const nivelMatch = !filtroNivel || (q.nivel || "").toString().trim().toUpperCase() === filtroNivel.toString().trim().toUpperCase();
+      const textoMatch = !buscaTexto ||
+        (q.enunciado || "").toLowerCase().includes(buscaTexto) ||
+        (q.comando || "").toLowerCase().includes(buscaTexto) ||
+        (q.suporte && typeof q.suporte === 'string' && q.suporte.toLowerCase().includes(buscaTexto));
+      return disciplinaMatch && descritorMatch && nivelMatch && textoMatch;
+    });
+
+    renderizarQuestoes(questoesFiltradas);
+    showLoader(false);
+  }
+
+  function limparFiltros() {
+    document.getElementById("filtroDisciplina").value = "";
+    document.getElementById("filtroDescritor").value = "";
+    document.getElementById("filtroNivel").value = "";
+    const busca = document.getElementById("buscaTexto");
+    if (busca) busca.value = "";
+    filtrarQuestoes();
+  }
+
+  function formatarQuestao(q, index) {
+    let html = `
+      <div class="questao">
+        <div class="questao-header">
+          <label class="questao-check-label">
+            <input type="checkbox" class="questao-check" data-index="${index}" onchange="atualizarContadorSelecao()">
+          </label>
+          <strong>Questão ${q.numero || index + 1}</strong> | 
+          <span>${q.disciplina}</span> | 
+          <span>${q.descritor}</span> | 
+          <span>Nível: ${q.nivel}</span>
+        </div>
+        <div class="questao-corpo">
+          <div class="enunciado">${q.enunciado}</div>
+    `;
+
+    if (q.suporte && q.suporte.includes("http")) {
+      html += `<img class="suporte-img" src="${q.suporte}" alt="Suporte" onerror="this.outerHTML='<div class=\'img-erro\'>⚠️ Falha ao carregar imagem de suporte</div>'">`;
+    } else if (q.suporte) {
+      html += `<div class="suporte-texto">${q.suporte}</div>`;
+    }
+
+    html += `<div class="comando" style="margin-top:15px; font-weight:bold;">${q.comando}</div>`;
+
+    html += `<div class="alternativas" style="margin-top:15px;">`;
+    if (q.tipo === "imagem") {
+      ["A", "B", "C", "D"].forEach(letra => {
+        if (q[letra]) {
+          html += `<div style="margin-bottom:10px;"><strong>${letra})</strong> <img class="alternativa-img" src="${q[letra]}" alt="Alternativa ${letra}" onerror="this.outerHTML='<span class=\'img-erro\'>⚠️ Falha ao carregar imagem (${letra})</span>'"></div>`;
+        }
+      });
+    } else {
+      ["A", "B", "C", "D"].forEach(letra => {
+        if (q[letra]) {
+          html += `<div style="margin-bottom:5px;"><strong>${letra})</strong> ${q[letra]}</div>`;
+        }
+      });
+    }
+    html += `</div>`;
+
+    if (user.isAdmin) {
+      html += `
+        <div class="admin-btns" style="margin-top: 10px; border-top: 1px dotted #ccc; padding-top: 10px;">
+          <button class="btn-admin btn-edit" onclick="editarQuestaoUI('${q.numero}')">✏️ Editar</button>
+          <button class="btn-admin btn-delete" onclick="excluirQuestaoUI('${q.numero}')">🗑️ Excluir</button>
+        </div>
+      `;
+    }
+
+    html += `
+        <div class="gabarito" style="margin-top:20px; padding: 10px; background: #e8f5e9; border-radius: 4px; display: inline-block;">
+          <strong>Gabarito:</strong> ${q.gabarito}
+        </div>
+      </div>
+    </div>`;
+    return html;
+  }
+
+  function renderizarQuestoes(questoes) {
+    const container = document.getElementById("questoes");
+    const info = document.getElementById("info-resultados");
+    if (questoes.length === 0) {
+      container.innerHTML = "<p style='text-align:center; padding: 20px;'>Nenhuma questão encontrada com os filtros aplicados.</p>";
+      if (info) info.textContent = "";
+      mostrarExportBar(false);
+      return;
+    }
+    const total = questoes.length;
+    if (info) info.textContent = `✅ ${total} quest${total !== 1 ? 'ões' : 'ão'} encontrada${total !== 1 ? 's' : ''}.`;
+    let html = `<label class="select-all-label"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"> Selecionar todas (${total})</label>`;
+    questoes.forEach((q, index) => { html += formatarQuestao(q, index); });
+    container.innerHTML = html;
+    mostrarExportBar(true);
+    atualizarContadorSelecao();
+  }
+
+  // --- GERADOR DE SIMULADOS ---
+
+  function atualizarDescritoresSimulado() {
+    const disciplina = document.getElementById("simDisciplina").value;
+    const container = document.getElementById("descritores-check-list");
+    container.innerHTML = "";
+
+    if (!disciplina) {
+      container.innerHTML = '<p style="color:#999; font-size: 0.9rem;">Selecione a disciplina para ver os descritores.</p>';
+      atualizarContagemSimulado(); // Reseta contagem
+      return;
+    }
+
+    const dNormalizada = disciplina.toString().trim().toUpperCase();
+    const descritores = [...new Set(todasQuestoes
+      .filter(q => (q.disciplina || "").toString().trim().toUpperCase() === dNormalizada)
+      .map(q => q.descritor))]
+      .sort();
+
+    descritores.forEach(desc => {
+      const label = document.createElement("label");
+      label.style.display = "block";
+      label.style.marginBottom = "5px";
+      label.innerHTML = `<input type="checkbox" name="simDescritores" value="${desc}" onchange="atualizarContagemSimulado()"> ${desc}`;
+      container.appendChild(label);
+    });
+    atualizarContagemSimulado();
+  }
+
+  function atualizarContagemSimulado() {
+    const disciplina = document.getElementById("simDisciplina").value;
+    const descritoresSelecionados = Array.from(document.querySelectorAll('input[name="simDescritores"]:checked')).map(cb => cb.value);
+
+    if (!disciplina || descritoresSelecionados.length === 0) {
+      document.getElementById("disponivelElementar").textContent = "(0 disponíveis)";
+      document.getElementById("disponivelBasico").textContent = "(0 disponíveis)";
+      document.getElementById("disponivelDesejavel").textContent = "(0 disponíveis)";
+      return;
+    }
+
+    const dNormalizada = disciplina.toString().trim().toUpperCase();
+    const pool = todasQuestoes.filter(q =>
+      (q.disciplina || "").toString().trim().toUpperCase() === dNormalizada &&
+      descritoresSelecionados.includes(q.descritor)
+    );
+
+    const el = pool.filter(q => isNivel(q, "elementar")).length;
+    const ba = pool.filter(q => isNivel(q, "basico")).length;
+    const de = pool.filter(q => isNivel(q, "desejavel")).length;
+
+    document.getElementById("disponivelElementar").textContent = `(${el} disponíveis)`;
+    document.getElementById("disponivelBasico").textContent = `(${ba} disponíveis)`;
+    document.getElementById("disponivelDesejavel").textContent = `(${de} disponíveis)`;
+  }
+
+  function gerarSimulado() {
+    if (!user.isAdmin) { alert("Acesso restrito a administradores."); return; }
+    const disciplina = document.getElementById("simDisciplina").value;
+    const descritoresSelecionados = Array.from(document.querySelectorAll('input[name="simDescritores"]:checked')).map(cb => cb.value);
+    const qtdElementar = parseInt(document.getElementById("qtdElementar").value) || 0;
+    const qtdBasico = parseInt(document.getElementById("qtdBasico").value) || 0;
+    const qtdDesejavel = parseInt(document.getElementById("qtdDesejavel").value) || 0;
+
+    if (!disciplina || descritoresSelecionados.length === 0 || (qtdElementar + qtdBasico + qtdDesejavel === 0)) {
+      alert("Preencha todos os campos do simulado.");
+      return;
+    }
+
+    const dNormalizada = disciplina.toString().trim().toUpperCase();
+    const pool = todasQuestoes.filter(q =>
+      (q.disciplina || "").toString().trim().toUpperCase() === dNormalizada &&
+      descritoresSelecionados.includes(q.descritor)
+    );
+
+    const elPool = pool.filter(q => isNivel(q, "elementar"));
+    const baPool = pool.filter(q => isNivel(q, "basico"));
+    const dePool = pool.filter(q => isNivel(q, "desejavel"));
+
+    if (qtdElementar > elPool.length || qtdBasico > baPool.length || qtdDesejavel > dePool.length) {
+      alert("Quantidade solicitada excede o pool de questões disponíveis para os descritores selecionados.");
+      return;
+    }
+
+    showLoader(true);
+    const selecionadas = [
+      ...shuffleArray(elPool).slice(0, qtdElementar),
+      ...shuffleArray(baPool).slice(0, qtdBasico),
+      ...shuffleArray(dePool).slice(0, qtdDesejavel)
+    ];
+
+    const container = document.getElementById("resultado-simulado");
+    container.innerHTML = "<h3>Simulado Gerado</h3><div id='area-simulado'></div>";
+    const area = document.getElementById("area-simulado");
+
+    if (selecionadas.length === 0) {
+      area.innerHTML = "<p>Nenhuma questão encontrada para os critérios.</p>";
+      mostrarExportBar(false);
+    } else {
+      let html = `<label class="select-all-label"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"> Selecionar todas (${selecionadas.length})</label>`;
+      selecionadas.forEach((q, i) => { html += formatarQuestao(q, i); });
+      area.innerHTML = html;
+      mostrarExportBar(true);
+      atualizarContadorSelecao();
+    }
+    showLoader(false);
+  }
+
+  // --- TESTES DIAGNÓSTICOS ---
+
+  function atualizarDescritoresDiagnostico() {
+    const disciplina = document.getElementById("diagDisciplina").value;
+    const container = document.getElementById("descritores-diag-list");
+    container.innerHTML = "";
+
+    if (!disciplina) {
+      container.innerHTML = '<p style="color:#999; font-size: 0.9rem;">Selecione a disciplina para ver os descritores.</p>';
+      return;
+    }
+
+    const dNormalizada = disciplina.toString().trim().toUpperCase();
+    const pool = todasQuestoes.filter(q => (q.disciplina || "").toString().trim().toUpperCase() === dNormalizada);
+
+    const descritores = [...new Set(pool.map(q => q.descritor))].sort();
+
+    descritores.forEach(desc => {
+      const qCount = pool.filter(q => normalizarDescritor(q.descritor) === normalizarDescritor(desc)).length;
+      const label = document.createElement("label");
+      label.style.display = "block";
+      label.style.marginBottom = "5px";
+      label.innerHTML = `<input type="checkbox" name="diagDescritores" value="${desc}"> ${desc} (${qCount})`;
+      container.appendChild(label);
+    });
+  }
+
+  function gerarDiagnostico() {
+    if (!user.isAdmin) { alert("Acesso restrito a administradores."); return; }
+    const disciplina = document.getElementById("diagDisciplina").value;
+    const descritoresSelecionados = Array.from(document.querySelectorAll('input[name="diagDescritores"]:checked')).map(cb => cb.value);
+
+    if (!disciplina || descritoresSelecionados.length === 0) {
+      alert("Selecione a disciplina e os descritores.");
+      return;
+    }
+
+    showLoader(true);
+    const dNormalizada = disciplina.toString().trim().toUpperCase();
+    const pool = todasQuestoes.filter(q =>
+      (q.disciplina || "").toString().trim().toUpperCase() === dNormalizada &&
+      descritoresSelecionados.some(ds => normalizarDescritor(q.descritor) === normalizarDescritor(ds))
+    );
+
+    let selecionadas = [];
+
+    descritoresSelecionados.forEach(desc => {
+      // Filtra todas as questões deste descritor
+      const qDesc = pool.filter(q => normalizarDescritor(q.descritor) === normalizarDescritor(desc));
+      if (qDesc.length === 0) return;
+
+      const escolhidasNesteDescritor = [];
+      const niveisAlvo = ["elementar", "basico", "desejavel"];
+
+      // 1ª Passagem: Tenta pegar uma de cada nível (E, B, D)
+      niveisAlvo.forEach(nAlvo => {
+        const disponiveisNivel = qDesc.filter(q => isNivel(q, nAlvo) && !escolhidasNesteDescritor.includes(q));
+        if (disponiveisNivel.length > 0) {
+          escolhidasNesteDescritor.push(shuffleArray([...disponiveisNivel])[0]);
+        }
+      });
+
+      // 2ª Passagem: Se ainda não tem 3, completa com o que sobrar do descritor (mesmo repetindo nível)
+      if (escolhidasNesteDescritor.length < 3) {
+        const restantes = qDesc.filter(q => !escolhidasNesteDescritor.includes(q));
+        const embaralhadas = shuffleArray([...restantes]);
+
+        while (escolhidasNesteDescritor.length < 3 && embaralhadas.length > 0) {
+          escolhidasNesteDescritor.push(embaralhadas.shift());
+        }
+      }
+
+      selecionadas.push(...escolhidasNesteDescritor);
+    });
+
+    const container = document.getElementById("resultado-diagnostico");
+    container.innerHTML = "<h3>Teste Diagnóstico Gerado</h3><div id='area-diagnostico'></div>";
+    const area = document.getElementById("area-diagnostico");
+
+    if (selecionadas.length === 0) {
+      area.innerHTML = "<p>Nenhuma questão encontrada para os critérios.</p>";
+      mostrarExportBar(false);
+    } else {
+      let html = `<label class="select-all-label"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"> Selecionar todas (${selecionadas.length})</label>`;
+      selecionadas.forEach((q, i) => { html += formatarQuestao(q, i); });
+      area.innerHTML = html;
+      mostrarExportBar(true);
+      atualizarContadorSelecao();
+    }
+    showLoader(false);
+  }
+
+  // --- NAVEGAÇÃO POR TEMAS ---
+
+  const mappingTemas = {
+    "Matemática": [
+      { nome: "Espaço e Forma", descritores: ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11"] },
+      { nome: "Grandezas e Medidas", descritores: ["D12", "D13", "D14", "D15"] },
+      { nome: "Números e Operações", descritores: ["D16", "D17", "D18", "D19", "D20", "D21", "D22", "D23", "D24", "D25", "D26", "D27", "D28", "D29", "D30", "D31", "D32", "D33", "D34", "D35"] },
+      { nome: "Tratamento da Informação", descritores: ["D36", "D37"] }
+    ],
+    "Português": [
+      { nome: "I. Procedimentos de Leitura", descritores: ["D1", "D3", "D4", "D6", "D14"] },
+      { nome: "II. Implicações do Suporte e Gênero", descritores: ["D5", "D12"] },
+      { nome: "III. Relação entre Textos", descritores: ["D20", "D21"] },
+      { nome: "IV. Coerência e Coesão", descritores: ["D2", "D7", "D8", "D9", "D10", "D11", "D15"] },
+      { nome: "V. Recursos Expressivos", descritores: ["D16", "D17", "D18", "D19"] },
+      { nome: "VI. Variação Linguística", descritores: ["D13"] }
+    ]
+  };
+
+  const descricoesSAEPE = {
+    "Matemática": {
+      "D1": "Identificar a localização/movimentação de objeto em mapas e outras representações gráficas.",
+      "D2": "Identificar propriedades comuns e diferenças entre figuras bidimensionais e tridimensionais.",
+      "D3": "Identificar propriedades de triângulos pela comparação de medidas de lados e ângulos.",
+      "D4": "Identificar relação entre quadriláteros por meio de suas propriedades.",
+      "D5": "Reconhecer conservação ou modificação de medidas em ampliações/reduções de figuras.",
+      "D6": "Reconhecer ângulos como mudança de direção ou giros, identificando ângulos retos e não retos.",
+      "D7": "Reconhecer que as imagens de uma figura construída por homotetia são semelhantes.",
+      "D8": "Resolver problema utilizando propriedades dos polígonos (soma de ângulos, diagonais).",
+      "D9": "Interpretar informações apresentadas por meio de coordenadas cartesianas.",
+      "D10": "Utilizar relações métricas do triângulo retângulo para resolver problemas.",
+      "D11": "Reconhecer círculo/circunferência, seus elementos e algumas de suas relações.",
+      "D12": "Resolver problema envolvendo o cálculo de perímetro de figuras planas.",
+      "D13": "Resolver problema envolvendo o cálculo de área de figuras planas.",
+      "D14": "Resolver problema envolvendo noções de volume.",
+      "D15": "Resolver problema utilizando relações entre diferentes unidades de medida.",
+      "D16": "Identificar a localização de números inteiros na reta numérica.",
+      "D17": "Identificar a localização de números racionais na reta numérica.",
+      "D18": "Efetuar cálculos com números inteiros (operações básicas).",
+      "D19": "Resolver problema com números naturais (diferentes significados das operações).",
+      "D20": "Resolver problema com números inteiros envolvendo as operações.",
+      "D21": "Reconhecer as diferentes representações de um número racional.",
+      "D22": "Identificar fração como representação que pode estar associada a diferentes significados.",
+      "D23": "Identificar frações equivalentes.",
+      "D24": "Reconhecer as representações decimais dos números racionais.",
+      "D25": "Efetuar cálculos que envolvam operações com números racionais.",
+      "D26": "Resolver problema com números racionais envolvendo as operações.",
+      "D27": "Efetuar cálculos de valor numérico de expressões algébricas.",
+      "D28": "Resolver problema que envolva porcentagem.",
+      "D29": "Resolver problema que envolva variações proporcionais (diretas ou inversas).",
+      "D30": "Calcular o valor numérico de uma expressão algébrica.",
+      "D31": "Resolver problema que envolva equação do 2º grau.",
+      "D32": "Identificar a expressão algébrica que expressa uma regularidade (padrões).",
+      "D33": "Identificar uma equação ou inequação do 1º grau que expressa um problema.",
+      "D34": "Resolver sistema de equações do 1º grau que expressa um problema.",
+      "D35": "Identificar a relação entre representações algébrica e geométrica de sistemas.",
+      "D36": "Resolver problema envolvendo informações apresentadas em tabelas e/ou gráficos.",
+      "D37": "Associar informações de listas/tabelas aos gráficos que as representam."
+    },
+    "Português": {
+      "D1": "Localizar informações explícitas em um texto.",
+      "D2": "Estabelecer relações entre partes de um texto (substituições/repetições).",
+      "D3": "Inferir o sentido de uma palavra ou expressão.",
+      "D4": "Inferir uma informação implícita em um texto.",
+      "D5": "Interpretar texto com auxílio de material gráfico diverso.",
+      "D6": "Identificar o tema de um texto.",
+      "D7": "Identificar a tese de um texto.",
+      "D8": "Estabelecer relação entre a tese e os argumentos para sustentá-la.",
+      "D9": "Diferenciar as partes principais das secundárias em um texto.",
+      "D10": "Identificar o conflito gerador do enredo e elementos da narrativa.",
+      "D11": "Estabelecer relação causa/consequência entre partes do texto.",
+      "D12": "Identificar o gênero de um texto.",
+      "D13": "Identificar marcas linguísticas de locutor e interlocutor.",
+      "D14": "Distinguir um fato da opinião relativa a esse fato.",
+      "D15": "Estabelecer relações lógico-discursivas (conjunções, advérbios).",
+      "D16": "Identificar efeitos de ironia ou humor em textos variados.",
+      "D17": "Reconhecer efeito de sentido decorrente do uso da pontuação.",
+      "D18": "Reconhecer efeito de sentido decorrente da escolha de palavras.",
+      "D19": "Reconhecer efeito de sentido decorrente de recursos ortográficos/morfossintáticos.",
+      "D20": "Reconhecer diferentes formas de tratar informação em textos do mesmo tema.",
+      "D21": "Reconhecer posições distintas entre opiniões sobre o mesmo fato/tema."
+    }
+  };
+
+  function renderizarArvores() {
+    renderizarArvore("tree-math", "Matemática");
+    renderizarArvore("tree-port", "Português");
+  }
+
+  function renderizarArvore(containerId, disciplina) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = "";
+
+    const descritoresNoBanco = new Set(
+      todasQuestoes
+        .filter(q => (q.disciplina || "").toString().trim().toUpperCase() === disciplina.toUpperCase())
+        .map(q => q.descritor)
+    );
+
+    mappingTemas[disciplina].forEach(tema => {
+      const descritoresReaisDoTema = [...descritoresNoBanco].filter(real =>
+        tema.descritores.some(d => normalizarDescritor(real) === normalizarDescritor(d))
+      ).sort((a, b) => {
+        const numA = parseInt(normalizarDescritor(a).replace("D", "")) || 0;
+        const numB = parseInt(normalizarDescritor(b).replace("D", "")) || 0;
+        return numA - numB;
+      });
+
+      if (descritoresReaisDoTema.length === 0) return;
+
+      const div = document.createElement("div");
+      div.style.marginBottom = "10px";
+
+      const header = document.createElement("strong");
+      header.style.cssText = "cursor:pointer; color:#2ba7ff;";
+      header.innerHTML = `📂 ${tema.nome}`;
+      header.onclick = () => filtrarPorDescritores(disciplina, descritoresReaisDoTema);
+      div.appendChild(header);
+
+      const ul = document.createElement("ul");
+      ul.style.fontSize = "0.85rem";
+      ul.style.listStyle = "none";
+      ul.style.paddingLeft = "0";
+      ul.style.marginTop = "10px";
+
+      descritoresReaisDoTema.forEach(descReal => {
+        const li = document.createElement("li");
+        li.className = "descritor-item";
+
+        const dNorm = normalizarDescritor(descReal);
+        const descTexto = descricoesSAEPE[disciplina][dNorm] || "Descrição não disponível.";
+
+        li.innerHTML = `<strong>${descReal}</strong>: <span style="color:#666;">${descTexto}</span>`;
+        li.onclick = (e) => {
+          document.querySelectorAll('.descritor-item').forEach(el => el.classList.remove('active-desc'));
+          li.classList.add('active-desc');
+          filtrarPorDescritores(disciplina, [descReal]);
+        };
+        ul.appendChild(li);
+      });
+
+      div.appendChild(ul);
+      container.appendChild(div);
+    });
+
+    if (container.innerHTML === "") {
+      container.innerHTML = "<p style='color:#999; font-size:0.9rem;'>Nenhum descritor disponível no banco para esta disciplina.</p>";
+    }
+  }
+
+  function filtrarPorDescritores(disciplina, descritoresReais) {
+    showLoader(true);
+
+    const questoesFiltradas = todasQuestoes.filter(q =>
+      (q.disciplina || "").toString().trim().toUpperCase() === disciplina.toUpperCase() &&
+      descritoresReais.some(d => normalizarDescritor(q.descritor) === normalizarDescritor(d))
+    );
+
+    const navFiltros = document.querySelector('.nav-item');
+    switchView('view-filtros', navFiltros);
+
+    document.getElementById('filtroDisciplina').value = disciplina;
+    document.getElementById('filtroDescritor').value =
+      descritoresReais.length === 1 ? descritoresReais[0] : "";
+    document.getElementById('filtroNivel').value = "";
+
+    setTimeout(() => {
+      renderizarQuestoes(questoesFiltradas);
+      showLoader(false);
+    }, 50);
+  }
+
+
+  function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  }
+
+  function getNivelNormalizado(nivel) {
+    return (nivel || "").toString().toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function normalizarDescritor(descritor) {
+    if (!descritor) return "";
+    return descritor.toString().trim().toUpperCase().replace(/^D0+/, "D").replace(/\s+/g, "");
+  }
+
+  function isNivel(questao, tipo) {
+    const n = getNivelNormalizado(questao.nivel);
+    const t = tipo.toLowerCase().trim();
+
+    const grupos = {
+      "elementar": ["elementar", "facil", "1", "baixo", "baixa"],
+      "basico": ["basico", "medio", "2", "media", "intermediario"],
+      "desejavel": ["desejavel", "dificil", "3", "alto", "alta", "avancado"]
+    };
+
+    const alvos = grupos[t] || [t];
+    return alvos.some(alvo => n.includes(alvo));
+  }
+
+  // --- SELEÇÃO DE QUESTÕES ---
+
+  function toggleSelectAll(masterCheckbox) {
+    const activeView = Array.from(document.querySelectorAll('.view-section')).find(s => s.style.display !== 'none');
+    if (!activeView) return;
+    const checkboxes = activeView.querySelectorAll('.questao-check');
+    checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+    atualizarContadorSelecao();
+  }
+
+  function atualizarContadorSelecao() {
+    const activeView = Array.from(document.querySelectorAll('.view-section')).find(s => s.style.display !== 'none');
+    if (!activeView) return;
+    const total = activeView.querySelectorAll('.questao-check').length;
+    const selecionadas = activeView.querySelectorAll('.questao-check:checked').length;
+    const counter = document.getElementById('export-count');
+    if (counter) {
+      counter.textContent = selecionadas > 0 ? `${selecionadas} de ${total} selecionadas` : `${total} questões`;
+    }
+    const selectAll = document.getElementById('select-all');
+    if (selectAll) selectAll.checked = (selecionadas === total && total > 0);
+  }
+
+  function mostrarExportBar(show) {
+    const bar = document.getElementById('export-bar');
+    if (bar) {
+      if (show) { bar.classList.add('visible'); } else { bar.classList.remove('visible'); }
+    }
+  }
+
+  function exportarSelecionadas(modo) {
+    const activeView = Array.from(document.querySelectorAll('.view-section')).find(s => s.style.display !== 'none');
+    if (!activeView) return;
+
+    const checkedBoxes = activeView.querySelectorAll('.questao-check:checked');
+    const allBoxes = activeView.querySelectorAll('.questao-check');
+
+    const boxes = checkedBoxes.length > 0 ? checkedBoxes : allBoxes;
+    if (boxes.length === 0) {
+      alert("Nenhuma questão disponível para exportar nesta aba.");
+      return;
+    }
+
+    const temp = document.createElement('div');
+    temp.id = 'export-temp';
+    temp.style.display = 'none';
+    boxes.forEach(cb => {
+      const questao = cb.closest('.questao');
+      if (questao) temp.appendChild(questao.cloneNode(true));
+    });
+    document.body.appendChild(temp);
+
+    const filename = modo === 'aluno' ? 'Questoes_Aluno' : 'Questoes_Professor';
+    exportarGenerico('export-temp', filename, modo);
+
+    setTimeout(() => { if (temp.parentNode) temp.remove(); }, 5000);
+  }
+
+  // --- ESTATÍSTICAS ---
+
+  function carregarEstatisticas() {
+    if (!todasQuestoes.length) return;
+
+    const total = todasQuestoes.length;
+    const math = todasQuestoes.filter(q => (q.disciplina || "").toString().trim().toUpperCase() === "MATEMÁTICA").length;
+    const port = todasQuestoes.filter(q => (q.disciplina || "").toString().trim().toUpperCase() === "PORTUGUÊS").length;
+
+    const el = todasQuestoes.filter(q => isNivel(q, "elementar")).length;
+    const ba = todasQuestoes.filter(q => isNivel(q, "basico")).length;
+    const de = todasQuestoes.filter(q => isNivel(q, "desejavel")).length;
+
+    // Renderiza KPIs
+    document.getElementById('stats-kpis').innerHTML = `
+      <div class="stat-card"><h2>${total}</h2><p>Total de Questões</p></div>
+      <div class="stat-card" style="border-top-color: #4caf50;"><h2>${math}</h2><p>Matemática</p></div>
+      <div class="stat-card" style="border-top-color: #2196f3;"><h2>${port}</h2><p>Português</p></div>
+    `;
+
+    // Renderiza Barra de Níveis
+    const percEl = ((el / total) * 100).toFixed(1);
+    const percBa = ((ba / total) * 100).toFixed(1);
+    const percDe = ((de / total) * 100).toFixed(1);
+
+    document.getElementById('stats-levels-bar').innerHTML = `
+      <div class="progress-bar-container">
+        <div class="progress-segment" style="width: ${percEl}%; background: #f44336;" title="Elementar: ${el}">E (${percEl}%)</div>
+        <div class="progress-segment" style="width: ${percBa}%; background: #ff9800;" title="Básico: ${ba}">B (${percBa}%)</div>
+        <div class="progress-segment" style="width: ${percDe}%; background: #4caf50;" title="Desejável: ${de}">D (${percDe}%)</div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #666;">
+        <span>🔴 Elementar: ${el}</span>
+        <span>🟠 Básico: ${ba}</span>
+        <span>🟢 Desejável: ${de}</span>
+      </div>
+    `;
+
+    // Renderiza Tabela de Descritores
+    const descritores = [...new Set(todasQuestoes.map(q => q.descritor))].sort();
+    const tbody = document.getElementById('tbody-stats');
+    tbody.innerHTML = descritores.map(desc => {
+      const qDesc = todasQuestoes.filter(q => q.descritor === desc);
+      const t = qDesc.length;
+      const e = qDesc.filter(q => isNivel(q, "elementar")).length;
+      const b = qDesc.filter(q => isNivel(q, "basico")).length;
+      const d = qDesc.filter(q => isNivel(q, "desejavel")).length;
+
+      return `
+        <tr style="border-bottom: 1px solid #eee;">
+          <td style="padding: 10px;"><strong>${desc}</strong></td>
+          <td style="padding: 10px; text-align: center;">${t}</td>
+          <td style="padding: 10px; text-align: center; color: #4caf50;">${e}</td>
+          <td style="padding: 10px; text-align: center; color: #ff9800;">${b}</td>
+          <td style="padding: 10px; text-align: center; color: #f44336;">${d}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function filtrarTabelaStats() {
+    const input = document.getElementById("stats-search");
+    const filter = input.value.toUpperCase();
+    const trs = document.getElementById("tbody-stats").getElementsByTagName("tr");
+
+    for (let i = 0; i < trs.length; i++) {
+      const td = trs[i].getElementsByTagName("td")[0];
+      if (td) {
+        const txtValue = td.textContent || td.innerText;
+        trs[i].style.display = txtValue.toUpperCase().indexOf(filter) > -1 ? "" : "none";
+      }
+    }
+  }
+
+  // --- EXPORTAÇÃO ---
+
+  function exportarGenerico(elementId, filename, modo = 'professor') {
+    showLoader(true);
+    const content = document.getElementById(elementId).cloneNode(true);
+
+    // Remover checkboxes e labels de seleção do clone
+    content.querySelectorAll('.questao-check-label, .select-all-label, .questao-check').forEach(el => el.remove());
+
+    // Se for modo aluno, remover gabaritos e metadados
+    if (modo === 'aluno') {
+      content.querySelectorAll('.gabarito').forEach(el => el.remove());
+      content.querySelectorAll('.questao-header').forEach(header => {
+        // Manter apenas o <strong> com número da questão
+        const strong = header.querySelector('strong');
+        header.innerHTML = '';
+        if (strong) header.appendChild(strong);
+      });
+
+      const cabecalhoAluno = `
+        <div style="border: 1px solid #000; padding: 10px; margin-bottom: 20px; font-family: Arial, sans-serif;">
+          <div style="text-align: center; font-weight: bold; font-size: 1.2rem; margin-bottom: 10px;">AVALIAÇÃO DE APRENDIZAGEM</div>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr><td style="padding: 5px; border-bottom: 1px solid #ccc;" colspan="2"><strong>ESCOLA:</strong> __________________________________________________________________</td></tr>
+            <tr>
+              <td style="padding: 5px; border-bottom: 1px solid #ccc; width: 70%;"><strong>ALUNO(A):</strong> _________________________________________________________</td>
+              <td style="padding: 5px; border-bottom: 1px solid #ccc;"><strong>DATA:</strong> ___/___/___</td>
+            </tr>
+            <tr>
+              <td style="padding: 5px;"><strong>PROFESSOR(A):</strong> ____________________________</td>
+              <td style="padding: 5px;"><strong>TURMA:</strong> ___________</td>
+            </tr>
+          </table>
+        </div>
+      `;
+      content.insertAdjacentHTML('afterbegin', cabecalhoAluno);
+    }
+
+    const imagens = Array.from(content.querySelectorAll("img"));
+
+    const promessas = imagens.map(img => new Promise(resolve => {
+      if (img.complete && img.naturalWidth > 0) resolve();
+      else {
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+        setTimeout(() => resolve(), 3000);
+      }
+    }));
+
+    Promise.all(promessas).then(() => {
+      imagens.forEach(img => {
+        img.removeAttribute("width");
+        img.removeAttribute("height");
+        img.style.width = "";
+        img.style.height = "";
+
+        if (img.naturalWidth > 620) {
+          const ratio = 620 / img.naturalWidth;
+          img.setAttribute("width", "620");
+          img.setAttribute("height", Math.round(img.naturalHeight * ratio));
+          img.style.width = "620px";
+        }
+      });
+
+      const html = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head><meta charset='utf-8'><title>Exportação</title>
+        <style>
+          body { font-family: Arial, sans-serif; }
+          .questao { margin-bottom: 30px; border-bottom: 1px solid #ccc; padding-bottom: 20px; page-break-inside: avoid; }
+          .questao-header { font-weight: bold; background: #eee; padding: 5px; margin-bottom: 10px; }
+          img { max-width: 100%; display: block; margin: 10px 0; }
+        </style>
+        </head><body>${content.innerHTML}</body></html>`;
+
+      const blob = window.htmlDocx.asBlob(html);
+      window.saveAs(blob, filename + '.docx');
+      showLoader(false);
+    });
+  }
+
+  function carregarPagina() {
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler(function (data) {
+        user = data;
+        if (user.isAdmin) {
+          const adminActions = document.getElementById("admin-actions");
+          if (adminActions) adminActions.style.display = "block";
+
+          document.querySelectorAll('.nav-item[onclick*="view-stats"], .nav-item[onclick*="view-config"]').forEach(el => {
+            el.style.display = "flex";
+          });
+        }
+
+        google.script.run.withSuccessHandler(preencherFiltros).getFiltros();
+
+        google.script.run
+          .withSuccessHandler(function (questoes) {
+            todasQuestoes = questoes;
+            filtrarQuestoes();
+            renderizarArvores();
+            showLoader(false);
+          })
+          .getQuestoes();
+      })
+      .getUserData();
+  }
+
+  function carregarConfig() {
+    if (!user.isAdmin) {
+      document.getElementById('config-content').innerHTML = "<p>Acesso restrito.</p>";
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function (admins) {
+        const tbody = document.getElementById('tbody-admins');
+        tbody.innerHTML = admins.map(email => `
+          <tr style="border-bottom: 1px solid #eee;">
+            <td style="padding: 10px;">${email}</td>
+            <td style="padding: 10px; text-align: center;">
+              ${(user.isMaster && email.toLowerCase() !== user.email.toLowerCase()) ? `<button class="btn-admin btn-remove-admin" onclick="removerAdminUI('${email}')">Remover</button>` : '-'}
+            </td>
+          </tr>
+        `).join('');
+      })
+      .getListaAdmins();
+  }
+
+  function adicionarAdminUI() {
+    const email = document.getElementById('novo-admin-email').value;
+    if (!email) return;
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        alert(res);
+        document.getElementById('novo-admin-email').value = "";
+        carregarConfig();
+        showLoader(false);
+      })
+      .adicionarAdmin(email);
+  }
+
+  function removerAdminUI(email) {
+    if (!confirm("Deseja remover " + email + " da lista de administradores?")) return;
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        alert(res);
+        carregarConfig();
+        showLoader(false);
+      })
+      .removerAdmin(email);
+  }
+
+  function abrirModalQuestao(numero = null) {
+    const modal = document.getElementById('modal-questao');
+    const form = document.getElementById('form-questao');
+    form.reset();
+    document.getElementById('q-numero').value = numero || "";
+    document.getElementById('modal-titulo').textContent = numero ? "✏️ Editar Questão #" + numero : "➕ Nova Questão";
+
+    if (numero) {
+      const q = todasQuestoes.find(item => item.numero == numero);
+      if (q) {
+        document.getElementById('q-disciplina').value = q.disciplina;
+        document.getElementById('q-descritor').value = q.descritor;
+        document.getElementById('q-nivel').value = q.nivel;
+        document.getElementById('q-enunciado').value = q.enunciado;
+        document.getElementById('q-suporte').value = q.suporte;
+        document.getElementById('q-comando').value = q.comando;
+        document.getElementById('q-tipo').value = q.tipo;
+        document.getElementById('q-gabarito').value = q.gabarito;
+
+        if (q.tipo === 'imagem') {
+          document.getElementById('q-A-img').value = q.A;
+          document.getElementById('q-B-img').value = q.B;
+          document.getElementById('q-C-img').value = q.C;
+          document.getElementById('q-D-img').value = q.D;
+        } else {
+          document.getElementById('q-A-txt').value = q.A;
+          document.getElementById('q-B-txt').value = q.B;
+          document.getElementById('q-C-txt').value = q.C;
+          document.getElementById('q-D-txt').value = q.D;
+        }
+        toggleTipoAlternativas();
+      }
+    }
+    modal.style.display = "block";
+  }
+
+  function fecharModalQuestao() {
+    document.getElementById('modal-questao').style.display = "none";
+  }
+
+  function toggleTipoAlternativas() {
+    const tipo = document.getElementById('q-tipo').value;
+    document.getElementById('alternativas-texto').style.display = tipo === 'texto' ? 'grid' : 'none';
+    document.getElementById('alternativas-imagem').style.display = tipo === 'imagem' ? 'grid' : 'none';
+  }
+
+  function salvarQuestaoUI(e) {
+    e.preventDefault();
+    const tipo = document.getElementById('q-tipo').value;
+    const dados = {
+      numero: document.getElementById('q-numero').value,
+      disciplina: document.getElementById('q-disciplina').value,
+      descritor: document.getElementById('q-descritor').value,
+      nivel: document.getElementById('q-nivel').value,
+      enunciado: document.getElementById('q-enunciado').value,
+      suporte: document.getElementById('q-suporte').value,
+      comando: document.getElementById('q-comando').value,
+      tipo: tipo,
+      gabarito: document.getElementById('q-gabarito').value,
+      A_txt: document.getElementById('q-A-txt').value,
+      B_txt: document.getElementById('q-B-txt').value,
+      C_txt: document.getElementById('q-C-txt').value,
+      D_txt: document.getElementById('q-D-txt').value,
+      A_img: document.getElementById('q-A-img').value,
+      B_img: document.getElementById('q-B-img').value,
+      C_img: document.getElementById('q-C-img').value,
+      D_img: document.getElementById('q-D-img').value
+    };
+
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        alert(res);
+        fecharModalQuestao();
+        carregarPagina();
+      })
+      .salvarQuestao(dados);
+  }
+
+  function editarQuestaoUI(numero) {
+    abrirModalQuestao(numero);
+  }
+
+  function excluirQuestaoUI(numero) {
+    if (!confirm("⚠️ Tem certeza que deseja EXCLUIR permanentemente a questão #" + numero + "?")) return;
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        alert(res);
+        carregarPagina();
+      })
+      .excluirQuestao(numero);
+  }
+
+  window.onload = carregarPagina;
+</script>
