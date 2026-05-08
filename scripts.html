@@ -1,5 +1,5 @@
 <script>
-  // VERSÃO: 1.0.2 - CORREÇÃO DEFINITIVA ATUALIZARFILTROS
+  // VERSÃO: 1.0.3 - CORREÇÃO GERAR QUESTIONARIOS
   let todasQuestoes = [];
 
   let user = { isAdmin: false };
@@ -149,13 +149,14 @@
   }
 
   function formatarQuestao(q, index) {
+    const numExibicao = (index + 1).toString().padStart(2, '0');
     let html = `
       <div class="questao">
         <div class="questao-header">
           <label class="questao-check-label">
             <input type="checkbox" class="questao-check" data-index="${index}" onchange="atualizarContadorSelecao()">
           </label>
-          <strong>Questão ${q.numero || index + 1}</strong> | 
+          <strong>Questão ${numExibicao}</strong> ${user.isAdmin ? `<span style="color:#999; font-size:0.8rem; font-weight:normal;">(Ref: #${q.numero})</span>` : ''} | 
           <span>${q.disciplina}</span> | 
           <span>${q.descritor}</span> | 
           <span>Nível: ${q.nivel}</span>
@@ -280,7 +281,6 @@
   }
 
   function gerarSimulado() {
-    if (!user.isAdmin) { alert("Acesso restrito a administradores."); return; }
     const disciplina = document.getElementById("simDisciplina").value;
     const descritoresSelecionados = Array.from(document.querySelectorAll('input[name="simDescritores"]:checked')).map(cb => cb.value);
     const qtdElementar = parseInt(document.getElementById("qtdElementar").value) || 0;
@@ -359,7 +359,6 @@
   }
 
   function gerarDiagnostico() {
-    if (!user.isAdmin) { alert("Acesso restrito a administradores."); return; }
     const disciplina = document.getElementById("diagDisciplina").value;
     const descritoresSelecionados = Array.from(document.querySelectorAll('input[name="diagDescritores"]:checked')).map(cb => cb.value);
 
@@ -724,25 +723,41 @@
     `;
 
     // Renderiza Tabela de Descritores
-    const descritores = [...new Set(todasQuestoes.map(q => q.descritor))].sort();
-    const tbody = document.getElementById('tbody-stats');
-    tbody.innerHTML = descritores.map(desc => {
-      const qDesc = todasQuestoes.filter(q => q.descritor === desc);
-      const t = qDesc.length;
-      const e = qDesc.filter(q => isNivel(q, "elementar")).length;
-      const b = qDesc.filter(q => isNivel(q, "basico")).length;
-      const d = qDesc.filter(q => isNivel(q, "desejavel")).length;
+    const grupos = {};
+    todasQuestoes.forEach(q => {
+      const key = `${q.disciplina}|${q.descritor}`;
+      if (!grupos[key]) {
+        grupos[key] = {
+          disciplina: q.disciplina,
+          descritor: q.descritor,
+          total: 0,
+          elementar: 0,
+          basico: 0,
+          desejavel: 0
+        };
+      }
+      grupos[key].total++;
+      if (isNivel(q, "elementar")) grupos[key].elementar++;
+      else if (isNivel(q, "basico")) grupos[key].basico++;
+      else if (isNivel(q, "desejavel")) grupos[key].desejavel++;
+    });
 
-      return `
+    const listaGrupos = Object.values(grupos).sort((a, b) => {
+      if (a.disciplina !== b.disciplina) return a.disciplina.localeCompare(b.disciplina);
+      return a.descritor.localeCompare(b.descritor, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    const tbody = document.getElementById('tbody-stats');
+    tbody.innerHTML = listaGrupos.map(g => `
         <tr style="border-bottom: 1px solid #eee;">
-          <td style="padding: 10px;"><strong>${desc}</strong></td>
-          <td style="padding: 10px; text-align: center;">${t}</td>
-          <td style="padding: 10px; text-align: center; color: #4caf50;">${e}</td>
-          <td style="padding: 10px; text-align: center; color: #ff9800;">${b}</td>
-          <td style="padding: 10px; text-align: center; color: #f44336;">${d}</td>
+          <td style="padding: 10px;">${g.disciplina}</td>
+          <td style="padding: 10px;"><strong>${g.descritor}</strong></td>
+          <td style="padding: 10px; text-align: center;">${g.total}</td>
+          <td style="padding: 10px; text-align: center; color: #f44336;">${g.elementar}</td>
+          <td style="padding: 10px; text-align: center; color: #ff9800;">${g.basico}</td>
+          <td style="padding: 10px; text-align: center; color: #4caf50;">${g.desejavel}</td>
         </tr>
-      `;
-    }).join('');
+      `).join('');
   }
 
   function filtrarTabelaStats() {
@@ -751,9 +766,10 @@
     const trs = document.getElementById("tbody-stats").getElementsByTagName("tr");
 
     for (let i = 0; i < trs.length; i++) {
-      const td = trs[i].getElementsByTagName("td")[0];
-      if (td) {
-        const txtValue = td.textContent || td.innerText;
+      const tdDisc = trs[i].getElementsByTagName("td")[0];
+      const tdDesc = trs[i].getElementsByTagName("td")[1];
+      if (tdDisc || tdDesc) {
+        const txtValue = (tdDisc ? tdDisc.textContent : "") + " " + (tdDesc ? tdDesc.textContent : "");
         trs[i].style.display = txtValue.toUpperCase().indexOf(filter) > -1 ? "" : "none";
       }
     }
@@ -845,13 +861,17 @@
     google.script.run
       .withSuccessHandler(function (data) {
         user = data;
+        
+        // Exibir email do usuário no rodapé da sidebar
+        const emailEl = document.getElementById("user-email");
+        if (emailEl) emailEl.textContent = user.email;
+
         if (user.isAdmin) {
           const adminActions = document.getElementById("admin-actions");
           if (adminActions) adminActions.style.display = "block";
 
-          document.querySelectorAll('.nav-item[onclick*="view-stats"], .nav-item[onclick*="view-config"]').forEach(el => {
-            el.style.display = "flex";
-          });
+          const navConfig = document.getElementById("nav-config");
+          if (navConfig) navConfig.style.display = "flex";
         }
 
         google.script.run.withSuccessHandler(preencherFiltros).getFiltros();
