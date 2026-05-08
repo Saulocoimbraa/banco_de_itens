@@ -46,10 +46,10 @@
       <a href="#" class="nav-item" onclick="switchView('view-temas', this, event)">
         <span>🌳</span> Navegar por Temas
       </a>
-      <a href="#" class="nav-item" onclick="switchView('view-stats', this, event)">
+      <a href="#" id="nav-stats" class="nav-item" onclick="switchView('view-stats', this, event)">
         <span>📊</span> Estatísticas
       </a>
-      <a href="#" class="nav-item" onclick="switchView('view-config', this, event)">
+      <a href="#" id="nav-config" class="nav-item" style="display: none;" onclick="switchView('view-config', this, event)">
         <span>⚙️</span> Configurações
       </a>
     </nav>
@@ -221,6 +221,7 @@
             <table id="table-stats" style="width: 100%; border-collapse: collapse;">
               <thead>
                 <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                  <th style="padding: 12px; text-align: left;">Disciplina</th>
                   <th style="padding: 12px; text-align: left;">Descritor</th>
                   <th style="padding: 12px; text-align: center;">Total</th>
                   <th style="padding: 12px; text-align: center;">Elementar</th>
